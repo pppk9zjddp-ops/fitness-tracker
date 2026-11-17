@@ -1,122 +1,117 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import Num from '@/components/Num';
-import RecoveryForm from '@/components/RecoveryForm';
-import { db, getPlan, getTargets } from '@/lib/api';
-import { addDays, dayTotals, fmt, iso, weightTrend, recoverySignal } from '@/lib/util';
-import { DEFAULT_TARGETS } from '@/lib/plan';
+import { useSync } from '@/components/Shell';
+import { db, getTargets, DEFAULT_TARGETS } from '@/lib/api';
+import { addDays, fmt, fmtDate, iso, mean, recoverySignal, sourceNotes, weekStart, weightTrend, windowMean, working } from '@/lib/util';
 
-export default function Heute() {
+const cls = (l) => (l === 'ok' ? 'ok' : l === 'warn' ? 'warn' : l === 'bad' ? 'bad' : '');
+
+export default function Uebersicht() {
   const today = iso();
-  const [weights, setWeights] = useState([]);
-  const [meals, setMeals] = useState([]);
-  const [recovery, setRecovery] = useState([]);
-  const [sets, setSets] = useState([]);
-  const [plan, setPlan] = useState([]);
-  const [targets, setTargets] = useState(DEFAULT_TARGETS);
-  const [ready, setReady] = useState(false);
+  const { status, version } = useSync();
+  const [d, setD] = useState(null);
 
   useEffect(() => {
     (async () => {
-      const [w, m, r, s, p, t] = await Promise.all([
-        db.list('weights', { filters: [['date', 'gte', addDays(today, -20)]], order: { col: 'date' } }),
-        db.list('meals', { filters: [['date', 'eq', today]] }),
-        db.list('recovery', { filters: [['date', 'gte', addDays(today, -31)]], order: { col: 'date' } }),
-        db.list('sets', { filters: [['date', 'eq', today]] }),
-        getPlan(),
+      const from = addDays(today, -35);
+      const [weights, nutrition, recovery, workouts, sets, targets] = await Promise.all([
+        db.list('weights', { filters: [['date', 'gte', from]], order: { col: 'date' } }),
+        db.list('nutrition', { filters: [['date', 'gte', from]], order: { col: 'date' } }),
+        db.list('recovery', { filters: [['date', 'gte', from]], order: { col: 'date' } }),
+        db.list('workouts', { filters: [['date', 'gte', from]], order: { col: 'date' } }),
+        db.list('sets', { filters: [['date', 'gte', from]] }),
         getTargets(),
       ]);
-      setWeights(w); setMeals(m); setRecovery(r); setSets(s); setPlan(p); setTargets(t); setReady(true);
+      setD({ weights, nutrition, recovery, workouts, sets, targets: targets || DEFAULT_TARGETS });
     })().catch(() => {});
-  }, [today]);
+  }, [today, version]);
 
-  if (!ready) return null;
+  if (!d) return null;
 
-  const todayW = weights.find((w) => w.date === today)?.kg ?? null;
-  const trend = weightTrend(weights, today);
-  const { kcal, protein } = dayTotals(meals);
-  const day = plan.find((d) => d.weekday === new Date().getDay());
-  const planned = day ? day.exercises.reduce((a, e) => a + e.sets, 0) : 0;
-  const recRow = recovery.find((r) => r.date === today);
-  const signal = recoverySignal(recovery, today);
+  const notes = sourceNotes(status, today);
+  const trend = weightTrend(d.weights, today);
+  const lastW = d.weights[d.weights.length - 1];
 
-  const saveWeight = async (kg) => {
-    if (kg === null) {
-      setWeights(weights.filter((w) => w.date !== today));
-      await db.remove('weights', today);
-    } else {
-      setWeights([...weights.filter((w) => w.date !== today), { date: today, kg }].sort((a, b) => (a.date > b.date ? 1 : -1)));
-      await db.upsert('weights', { date: today, kg });
-    }
-  };
+  // Ernaehrung: letzter vollstaendiger Tag und 7-Tage-Mittel, heute zaehlt noch nicht.
+  const yesterday = addDays(today, -1);
+  const full = d.nutrition.filter((n) => n.date <= yesterday);
+  const lastN = full[full.length - 1];
+  const n7 = full.filter((n) => n.date >= addDays(today, -7));
+  const kcal7 = mean(n7.map((n) => n.kcal));
+  const prot7 = mean(n7.map((n) => n.protein));
+
+  const ws = weekStart(today);
+  const hevy = d.workouts.filter((w) => w.source === 'hevy');
+  const weekSessions = hevy.filter((w) => w.date >= ws);
+  const weekSets = d.sets.filter((s) => s.date >= ws && working(s)).length;
+  const lastWorkout = hevy[hevy.length - 1];
+
+  const recRows = d.recovery.filter((r) => r.recovery != null || r.sleep_h != null);
+  const lastR = recRows[recRows.length - 1];
+  const signal = recoverySignal(d.recovery, today);
+  const sleep7 = windowMean(d.recovery, 'sleep_h', addDays(today, -6), today).mean;
 
   return (
     <>
       <div className="head">
         <div>
-          <h1>Heute</h1>
-          <p className="sub">{new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
-        </div>
-        <Link href="/einstellungen" className="btn ghost small">Einstellungen</Link>
-      </div>
-
-      <div className="card">
-        <div className="row between">
-          <h2>Gewicht</h2>
-          <span className="sub">7-Tage-Mittel {fmt(trend.cur, 2)} kg{trend.rate !== null && ` · ${trend.rate >= 0 ? '+' : ''}${fmt(trend.rate, 2)} kg/Woche`}</span>
-        </div>
-        <div className="row">
-          <div style={{ width: 130 }}>
-            <Num value={todayW} onCommit={saveWeight} placeholder="kg heute" />
-          </div>
-          <div className={`note grow ${trend.level === 'ok' ? 'ok' : trend.level === 'warn' ? 'warn' : ''}`}>{trend.text}</div>
+          <h1>Übersicht</h1>
+          <p className="sub">{new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
         </div>
       </div>
 
-      <Link href="/essen" className="card" style={{ display: 'block' }}>
-        <div className="row between">
-          <h2>Ernährung</h2>
-          <span className="sub">{meals.length} Einträge ›</span>
+      {!!notes.length && (
+        <div className="stack" style={{ marginBottom: 12 }}>
+          {notes.map((n, i) => (
+            <div key={i} className={`note ${cls(n.level)}`}>
+              {n.text} {n.setup && <Link href="/einstellungen" style={{ textDecoration: 'underline' }}>Einrichten</Link>}
+            </div>
+          ))}
         </div>
-        <div className="grid2">
-          <div>
-            <div className="row between"><span className="big">{fmt(kcal, 0)}</span><span className="sub">von {fmt(targets.kcal, 0)} kcal</span></div>
-            <div className="bar"><i style={{ width: `${Math.min(100, (kcal / targets.kcal) * 100)}%` }} /></div>
-          </div>
-          <div>
-            <div className="row between"><span className="big">{fmt(protein, 0)}</span><span className="sub">von {fmt(targets.protein, 0)} g Protein</span></div>
-            <div className="bar blue"><i style={{ width: `${Math.min(100, (protein / targets.protein) * 100)}%` }} /></div>
-          </div>
-        </div>
-      </Link>
+      )}
 
-      <Link href="/training" className="card" style={{ display: 'block' }}>
-        <div className="row between">
-          <h2>Training</h2>
-          <span className="sub">{day ? `${sets.length} von ${planned} Sätzen ›` : 'öffnen ›'}</span>
-        </div>
-        {day ? (
-          <>
-            <p><strong>{day.title}</strong></p>
-            <p className="sub">{day.exercises.map((e) => e.name).join(' · ')}</p>
-          </>
-        ) : (
-          <p className="muted">Pausentag. Ein ausgefallenes Training kannst du heute nachholen.</p>
-        )}
-      </Link>
+      <div className="tiles">
+        <Link href="/koerper" className="card">
+          <div className="row between"><h2>Gewicht</h2><span className="sub">{lastW ? `zuletzt ${fmtDate(lastW.date)}` : ''}</span></div>
+          <div className="row" style={{ alignItems: 'baseline' }}>
+            <span className="big">{fmt(trend.cur, 1)}</span><span className="sub">kg im 7-Tage-Mittel</span>
+          </div>
+          <div className="kv"><span>Veränderung zur Vorwoche</span><span className={trend.rate == null ? '' : trend.level === 'ok' ? 'pos' : 'neg'}>{trend.rate == null ? '–' : `${trend.rate >= 0 ? '+' : ''}${fmt(trend.rate, 2)} kg`}</span></div>
+          <div className="kv"><span>Ziel</span><span>+0,2 bis +0,4 kg pro Woche</span></div>
+          <div className={`note ${cls(trend.level)}`} style={{ marginTop: 8 }}>{trend.text}</div>
+        </Link>
 
-      <div className="card">
-        <div className="row between">
-          <h2>Recovery (Whoop)</h2>
-          <Link href="/recovery" className="sub">Verlauf ›</Link>
-        </div>
-        <RecoveryForm
-          date={today}
-          row={recRow}
-          onSaved={(row) => setRecovery([...recovery.filter((r) => r.date !== today), row])}
-        />
-        <div className={`note ${signal.level === 'warn' ? 'warn' : signal.level === 'ok' ? 'ok' : ''}`} style={{ marginTop: 10 }}>{signal.text}</div>
+        <Link href="/ernaehrung" className="card">
+          <div className="row between"><h2>Ernährung</h2><span className="sub">{lastN ? `letzter Tag ${fmtDate(lastN.date)}` : ''}</span></div>
+          <div className="row" style={{ alignItems: 'baseline' }}>
+            <span className="big">{fmt(kcal7, 0)}</span><span className="sub">kcal im 7-Tage-Mittel, Ziel {fmt(d.targets.kcal, 0)}</span>
+          </div>
+          <div className="bar" style={{ margin: '6px 0 8px' }}><i style={{ width: `${Math.min(100, ((kcal7 || 0) / d.targets.kcal) * 100)}%` }} /></div>
+          <div className="kv"><span>Protein im 7-Tage-Mittel</span><span>{fmt(prot7, 0)} g von {fmt(d.targets.protein, 0)} g</span></div>
+          <div className="kv"><span>Letzter Tag</span><span>{lastN ? `${fmt(lastN.kcal, 0)} kcal · ${fmt(lastN.protein, 0)} g Protein` : '–'}</span></div>
+          <div className="kv"><span>Tage mit Daten (7 Tage)</span><span>{n7.length} von 7</span></div>
+        </Link>
+
+        <Link href="/training" className="card">
+          <div className="row between"><h2>Training</h2><span className="sub">diese Woche</span></div>
+          <div className="row" style={{ alignItems: 'baseline' }}>
+            <span className="big">{weekSessions.length}</span><span className="sub">von 5 Einheiten · {weekSets} Arbeitssätze</span>
+          </div>
+          <div className="bar" style={{ margin: '6px 0 8px' }}><i style={{ width: `${Math.min(100, (weekSessions.length / 5) * 100)}%` }} /></div>
+          <div className="kv"><span>Letzte Einheit</span><span>{lastWorkout ? `${fmtDate(lastWorkout.date)} · ${lastWorkout.title}` : '–'}</span></div>
+          <div className="kv"><span>Einheiten in den letzten 28 Tagen</span><span>{hevy.filter((w) => w.date >= addDays(today, -27)).length}</span></div>
+        </Link>
+
+        <Link href="/erholung" className="card">
+          <div className="row between"><h2>Erholung</h2><span className="sub">{lastR ? fmtDate(lastR.date) : ''}</span></div>
+          <div className="row" style={{ alignItems: 'baseline' }}>
+            <span className="big">{lastR?.recovery != null ? `${fmt(lastR.recovery, 0)} %` : '–'}</span><span className="sub">Recovery</span>
+          </div>
+          <div className="kv"><span>Schlaf letzte Nacht / 7-Tage-Mittel</span><span>{fmt(lastR?.sleep_h, 1)} h / {fmt(sleep7, 1)} h</span></div>
+          <div className="kv"><span>Ruhepuls · HRV</span><span>{fmt(lastR?.rhr, 0)} · {fmt(lastR?.hrv, 0)} ms</span></div>
+          <div className={`note ${cls(signal.level)}`} style={{ marginTop: 8 }}>{signal.text}</div>
+        </Link>
       </div>
     </>
   );

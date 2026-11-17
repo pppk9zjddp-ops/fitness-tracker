@@ -1,80 +1,62 @@
 'use client';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { ago } from '@/lib/util';
 
-const AppInfo = createContext({ ai: false, backend: 'local' });
-export const useAppInfo = () => useContext(AppInfo);
+const Sync = createContext({ status: {}, syncing: false, version: 0, sync: () => {} });
+export const useSync = () => useContext(Sync);
 
 const TABS = [
-  ['/', 'Heute'],
+  ['/', 'Übersicht'],
   ['/training', 'Training'],
-  ['/essen', 'Essen'],
-  ['/fortschritt', 'Fortschritt'],
-  ['/recovery', 'Recovery'],
+  ['/ernaehrung', 'Ernährung'],
+  ['/koerper', 'Körper'],
+  ['/erholung', 'Erholung'],
+  ['/einstellungen', 'Einstellungen'],
 ];
 
 export default function Shell({ children }) {
   const path = usePathname();
-  const [state, setState] = useState('loading');
-  const [info, setInfo] = useState({ ai: false, backend: 'local' });
-  const [pw, setPw] = useState('');
-  const [err, setErr] = useState('');
+  const [status, setStatus] = useState({});
+  const [syncing, setSyncing] = useState(false);
+  const [version, setVersion] = useState(0);
 
-  const check = async () => {
+  const sync = useCallback(async () => {
+    setSyncing(true);
     try {
-      const j = await (await fetch('/api/login')).json();
-      setInfo({ ai: j.ai, backend: j.backend });
-      setState(j.ok ? 'in' : 'out');
-    } catch {
-      setState('out');
-    }
-  };
-
-  useEffect(() => {
-    check();
-    const f = () => setState('out');
-    window.addEventListener('aufbau-unauth', f);
-    return () => window.removeEventListener('aufbau-unauth', f);
+      const j = await (await fetch('/api/sync', { method: 'POST' })).json();
+      if (!j.error) setStatus(j);
+    } catch {}
+    setSyncing(false);
+    setVersion((v) => v + 1);
   }, []);
 
-  const login = async (e) => {
-    e.preventDefault();
-    setErr('');
-    const r = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ password: pw }),
-    });
-    if (r.ok) {
-      setPw('');
-      check();
-    } else setErr('Passwort stimmt nicht.');
-  };
-
-  if (state === 'loading') return null;
-
-  if (state === 'out') {
-    return (
-      <form className="login" onSubmit={login}>
-        <h1 className="center" style={{ marginBottom: 18 }}>Aufbau</h1>
-        <input type="password" placeholder="Passwort" value={pw} onChange={(e) => setPw(e.target.value)} autoFocus />
-        <button className="primary" style={{ width: '100%', marginTop: 10 }}>Anmelden</button>
-        {err && <p className="small center" style={{ color: 'var(--bad)', marginTop: 10 }}>{err}</p>}
-      </form>
-    );
-  }
+  // Beim Oeffnen den letzten Stand laden und neu abrufen, wenn er aelter als eine Stunde ist.
+  useEffect(() => {
+    (async () => {
+      try {
+        const j = await (await fetch('/api/sync')).json();
+        setStatus(j);
+        if (!j.at || Date.now() - j.at > 3600000) sync();
+      } catch {}
+    })();
+  }, [sync]);
 
   return (
-    <AppInfo.Provider value={info}>
-      <main className="wrap">{children}</main>
+    <Sync.Provider value={{ status, syncing, version, sync }}>
       <nav className="tabs">
         <div className="inner">
           {TABS.map(([href, label]) => (
             <Link key={href} href={href} className={path === href ? 'on' : ''}>{label}</Link>
           ))}
+          <span className="syncbox">
+            <span className="sub">{syncing ? 'Aktualisiere …' : `Stand: ${ago(status.at)}`}</span>
+            <button className="icon" disabled={syncing} onClick={sync}>Aktualisieren</button>
+          </span>
         </div>
       </nav>
-    </AppInfo.Provider>
+      <main className="wrap">{children}</main>
+    </Sync.Provider>
   );
 }
