@@ -17,9 +17,20 @@ Umfänge trägst du von Hand ein, dafür gibt es keine Quelle.
 2. Dieses Repository auf den Mac laden.
 3. Doppelklick auf `Dashboard starten.command`. Beim ersten Start werden Pakete installiert und die App gebaut.
 
-Das Dashboard öffnet sich unter http://localhost:3210. Es ist nur auf diesem Mac erreichbar. Lässt macOS die Datei nicht starten: Rechtsklick, "Öffnen".
+Das Dashboard öffnet sich im Browser unter http://localhost:3210. Es ist nur auf diesem Mac erreichbar. Lässt macOS die Datei nicht starten: Rechtsklick, "Öffnen".
 
 Beim Öffnen ruft das Dashboard alle Quellen ab, wenn der letzte Abruf älter als eine Stunde ist. Oben rechts gibt es "Aktualisieren".
+
+## Als Mac-App installieren
+
+Doppelklick auf `App installieren.command`. Das Skript baut `Fitness Dashboard.app` und legt sie in den Programme-Ordner. Danach findest du sie in Launchpad und Spotlight und kannst sie ins Dock ziehen.
+
+- Mit den Apple-Entwicklerwerkzeugen (`xcode-select --install` im Terminal, einmalig) bekommt die App ein eigenes Fenster mit eigenem Dock-Symbol. Beim Beenden stoppt sie den Server.
+- Ohne die Werkzeuge öffnet die App das Dashboard in einem Chrome-Fenster ohne Adressleiste, sonst im Standardbrowser. Der Server läuft dann im Hintergrund weiter.
+
+Die App merkt sich, wo der Projektordner liegt. Nach dem Verschieben des Ordners oder einem Update `App installieren.command` erneut ausführen. Startprobleme stehen in `~/Library/Logs/FitnessDashboard.log`.
+
+Die App wird auf deinem Mac gebaut und ist nicht signiert. Sie ist für diesen einen Rechner gedacht, nicht zum Weitergeben.
 
 ## Wo die Daten liegen
 
